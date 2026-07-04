@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graphite &mdash; Signal Analysis </title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="noise-overlay" aria-hidden="true"></div>
+
+  <div class="page">
+    <header class="brand">
+      <div class="brand__mark" aria-hidden="true">
+        <span class="brand__pulse"></span>
+      </div>
+      <div class="brand__text">
+        <p class="brand__eyebrow">Graphite Agent</p>
+        <h1 class="brand__title">Signal Desk</h1>
+      </div>
+    </header>
+
+    <main class="desk">
+      <section class="panel panel--query" aria-label="Analyze a stock or fund">
+        <form id="analyze-form" class="query" autocomplete="off">
+          <label for="symbol-input" class="query__label">
+            What are you looking at?
+          </label>
+          <div class="query__row">
+            <span class="query__icon" aria-hidden="true">$</span>
+            <input
+              id="symbol-input"
+              name="symbol"
+              type="text"
+              class="query__input"
+              placeholder="AAPL, VTI, Tesla, NVDA..."
+              aria-describedby="query-hint"
+              required
+            />
+            <button type="submit" class="query__submit" id="analyze-btn">
+              <span class="query__submit-label">Analyze</span>
+              <span class="query__submit-arrow" aria-hidden="true">&rarr;</span>
+            </button>
+          </div>
+          <div class="query__meta">
+            <p id="query-hint" class="query__hint">Ticker or company name &middot; simulated analysis, not financial advice</p>
+            <fieldset class="horizon" aria-label="Time horizon">
+              <legend class="sr-only">Time horizon</legend>
+              <label class="horizon__option">
+                <input type="radio" name="horizon" value="short" />
+                <span>Short-term</span>
+              </label>
+              <label class="horizon__option">
+                <input type="radio" name="horizon" value="long" checked />
+                <span>Long-term</span>
+              </label>
+            </fieldset>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel panel--stage" id="stage" aria-live="polite">
+
+        <div class="empty-state" id="empty-state">
+          <div class="empty-state__glyph" aria-hidden="true">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+              <path d="M4 32 L14 20 L21 26 L36 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="36" cy="8" r="2.5" fill="currentColor"/>
+            </svg>
+          </div>
+          <p class="empty-state__title">Awaiting a symbol</p>
+          <p class="empty-state__body">Enter a ticker or fund name above. The agent will weigh valuation, momentum, sentiment and risk before issuing a call.</p>
+        </div>
+
+        <div class="loading-state" id="loading-state" hidden>
+          <div class="scanner" aria-hidden="true">
+            <div class="scanner__ring"></div>
+            <div class="scanner__ring scanner__ring--delay"></div>
+            <div class="scanner__core"></div>
+          </div>
+          <p class="loading-state__label" id="loading-label">Pulling valuation data&hellip;</p>
+        </div>
+
+        <article class="result" id="result" hidden>
+          <header class="result__header">
+            <div class="result__identity">
+              <p class="result__symbol" id="result-symbol">AAPL</p>
+              <p class="result__horizon" id="result-horizon">Long-term outlook</p>
+            </div>
+            <div class="signal" id="signal-badge" data-signal="hold">
+              <span class="signal__dot" aria-hidden="true"></span>
+              <span class="signal__label" id="signal-label">HOLD</span>
+            </div>
+          </header>
+
+          <div class="result__grid">
+            <div class="confidence" aria-label="Agent confidence">
+              <svg class="confidence__ring" viewBox="0 0 120 120" width="120" height="120">
+                <circle class="confidence__track" cx="60" cy="60" r="52" />
+                <circle class="confidence__fill" id="confidence-fill" cx="60" cy="60" r="52" />
+              </svg>
+              <div class="confidence__value">
+                <span id="confidence-number">72</span><span class="confidence__pct">%</span>
+                <span class="confidence__caption">confidence</span>
+              </div>
+            </div>
+
+            <ul class="factors" id="factors-list">
+              <!-- factor rows injected here -->
+            </ul>
+          </div>
+
+          <div class="reasoning">
+            <h2 class="reasoning__title">Agent reasoning</h2>
+            <p class="reasoning__paragraph" id="reasoning-paragraph"></p>
+            <ul class="reasoning__bullets" id="reasoning-bullets"></ul>
+          </div>
+
+          <footer class="result__footer">
+            <p class="result__disclaimer">Simulated heuristic output for illustration only &mdash; not investment advice.</p>
+            <button type="button" class="rerun-btn" id="rerun-btn">Run another analysis</button>
+          </footer>
+        </article>
+      </section>
+
+      <aside class="panel panel--history" aria-label="Recent analyses">
+        <h2 class="history__title">Recent signals</h2>
+        <ul class="history__list" id="history-list">
+          <li class="history__empty" id="history-empty">Nothing analyzed yet this session.</li>
+        </ul>
+      </aside>
+    </main>
+
+    <footer class="page-footer">
+      <p>Graphite Signal Desk &middot; deterministic heuristic simulation &middot; no live market data</p>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
