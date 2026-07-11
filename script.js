@@ -107,6 +107,7 @@ function generateFactors(symbol, horizon) {
     weights,
   };
 }
+// Analysed till line 110
 
 /* ---------- Signal + confidence derivation ---------- */
 

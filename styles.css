@@ -109,7 +109,7 @@ body {
   justify-content: center;
   flex-shrink: 0;
 }
-
+/* Analysed till line 110 */
 .brand__pulse {
   width: 9px;
   height: 9px;

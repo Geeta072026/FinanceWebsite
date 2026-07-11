@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Graphite &mdash; Signal Analysis </title>
+  <title>Gray &mdash; TrendAnalysis </title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -27,7 +27,7 @@
       <section class="panel panel--query" aria-label="Analyze a stock or fund">
         <form id="analyze-form" class="query" autocomplete="off">
           <label for="symbol-input" class="query__label">
-            What are you looking at?
+            What are you looking at? Does it surprise you?
           </label>
           <div class="query__row">
             <span class="query__icon" aria-hidden="true">$</span>
@@ -36,7 +36,7 @@
               name="symbol"
               type="text"
               class="query__input"
-              placeholder="AAPL, VTI, Tesla, NVDA..."
+              placeholder="AAPL, VTI, Tesla, ICPL, RIL, NVDA..."
               aria-describedby="query-hint"
               required
             />
@@ -81,7 +81,7 @@
             <div class="scanner__ring scanner__ring--delay"></div>
             <div class="scanner__core"></div>
           </div>
-          <p class="loading-state__label" id="loading-label">Pulling valuation data&hellip;</p>
+          <p class="loading-state__label" id="loading-label">Please wait. Pulling valuation data&hellip;</p>
         </div>
 
         <article class="result" id="result" hidden>
