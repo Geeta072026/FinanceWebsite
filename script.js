@@ -1,56 +1,24 @@
 'use strict';
 
 /* ============================================================
-   Graphite Signal Desk — simulated analysis engine
-   All logic is deterministic (seeded by the input symbol) so the
-   same query always returns the same call, while still varying
-   naturally between different symbols.
+   Graphite Signal Desk — live analysis engine
+   Market data is pulled from Yahoo Finance through a lightweight
+   proxy (see /cloudflare-worker/worker.js) because Yahoo's
+   endpoints don't send CORS headers and can't be called directly
+   from a browser. The proxy forwards the raw Yahoo response
+   unchanged; every scoring decision below happens client-side.
    ============================================================ */
 
-/* ---------- Utilities: deterministic seeding ---------- */
+/* ---------- Proxy configuration ----------
+   Replace with your deployed Cloudflare Worker URL
+   (e.g. https://graphite-quote-proxy.YOUR-SUBDOMAIN.workers.dev).
+   See /cloudflare-worker/README.md for deploy steps. */
 
-function hashString(str) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
+const YAHOO_PROXY_BASE = 'https://graphite-quote-proxy.YOUR-SUBDOMAIN.workers.dev';
 
-function mulberry32(seed) {
-  let a = seed;
-  return function () {
-    a |= 0;
-    a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/* ---------- Known symbol profiles ----------
-   A handful of recognizable names get a directional bias so the
-   demo feels grounded; anything else is derived purely from the
-   deterministic hash of its name. */
-
-const KNOWN_PROFILES = {
-  AAPL: { valuation: -8, momentum: 12, sentiment: 10, risk: -6, label: 'Apple Inc.' },
-  MSFT: { valuation: -4, momentum: 14, sentiment: 12, risk: -10, label: 'Microsoft Corp.' },
-  NVDA: { valuation: -22, momentum: 26, sentiment: 18, risk: 20, label: 'NVIDIA Corp.' },
-  TSLA: { valuation: -18, momentum: -6, sentiment: -4, risk: 26, label: 'Tesla Inc.' },
-  AMZN: { valuation: 2, momentum: 10, sentiment: 8, risk: -2, label: 'Amazon.com Inc.' },
-  GOOGL: { valuation: 6, momentum: 8, sentiment: 6, risk: -8, label: 'Alphabet Inc.' },
-  META: { valuation: 4, momentum: 16, sentiment: 4, risk: 8, label: 'Meta Platforms Inc.' },
-  NFLX: { valuation: -10, momentum: 6, sentiment: 2, risk: 6, label: 'Netflix Inc.' },
-  VTI: { valuation: 8, momentum: 6, sentiment: 10, risk: -28, label: 'Vanguard Total Stock Market ETF' },
-  VOO: { valuation: 6, momentum: 6, sentiment: 10, risk: -30, label: 'Vanguard S&P 500 ETF' },
-  SPY: { valuation: 4, momentum: 8, sentiment: 8, risk: -26, label: 'SPDR S&P 500 ETF' },
-  QQQ: { valuation: -6, momentum: 14, sentiment: 6, risk: -14, label: 'Invesco QQQ Trust' },
-  BND: { valuation: 12, momentum: -4, sentiment: 2, risk: -34, label: 'Vanguard Total Bond Market ETF' },
-  GME: { valuation: -30, momentum: -14, sentiment: -20, risk: 40, label: 'GameStop Corp.' },
-  COIN: { valuation: -20, momentum: 4, sentiment: -8, risk: 34, label: 'Coinbase Global Inc.' },
-};
+/* ---------- Company name → ticker shortcuts ----------
+   Fast path for common names so we skip a network round-trip to
+   the search endpoint for the most frequently typed queries. */
 
 const COMPANY_ALIASES = {
   APPLE: 'AAPL', MICROSOFT: 'MSFT', NVIDIA: 'NVDA', TESLA: 'TSLA',
@@ -58,41 +26,121 @@ const COMPANY_ALIASES = {
   FACEBOOK: 'META', NETFLIX: 'NFLX', GAMESTOP: 'GME', COINBASE: 'COIN',
 };
 
-/* ---------- Normalization ---------- */
-
-function normalizeSymbol(raw) {
-  const trimmed = raw.trim().toUpperCase();
-  if (COMPANY_ALIASES[trimmed]) return COMPANY_ALIASES[trimmed];
-  // Strip anything that isn't alphanumeric for a clean pseudo-ticker
-  const cleaned = trimmed.replace(/[^A-Z0-9.]/g, '');
-  return cleaned.length ? cleaned.slice(0, 6) : 'N/A';
-}
-
-/* ---------- Core factor generation ---------- */
-
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-function generateFactors(symbol, horizon) {
-  const seed = hashString(symbol + '::' + horizon);
-  const rng = mulberry32(seed);
-  const profile = KNOWN_PROFILES[symbol] || null;
+/* ---------- Symbol resolution ----------
+   Turns whatever the user typed (a ticker or a company name) into
+   a Yahoo-recognized symbol, using the alias map first and the
+   Yahoo search endpoint as a fallback for anything unrecognized. */
 
-  // Base randomized scores centered near 50, spread by rng
-  const base = () => clamp(Math.round(50 + (rng() - 0.5) * 70), 4, 96);
-
-  let valuation = base();
-  let momentum = base();
-  let sentiment = base();
-  let risk = base();
-
-  if (profile) {
-    valuation = clamp(valuation + profile.valuation, 4, 96);
-    momentum = clamp(momentum + profile.momentum, 4, 96);
-    sentiment = clamp(sentiment + profile.sentiment, 4, 96);
-    risk = clamp(risk + profile.risk, 4, 96);
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Request failed (${res.status})`);
   }
+  return res.json();
+}
+
+async function fetchQuote(symbol) {
+  const data = await fetchJSON(`${YAHOO_PROXY_BASE}/quote?symbols=${encodeURIComponent(symbol)}`);
+  const result = data && data.quoteResponse && data.quoteResponse.result && data.quoteResponse.result[0];
+  if (!result) throw new Error(`No quote data found for "${symbol}".`);
+  return result;
+}
+
+async function searchSymbol(query) {
+  const data = await fetchJSON(`${YAHOO_PROXY_BASE}/search?q=${encodeURIComponent(query)}`);
+  const quotes = (data && data.quotes) || [];
+  const match = quotes.find((q) => q.quoteType === 'EQUITY' || q.quoteType === 'ETF');
+  if (!match) throw new Error(`No matching ticker found for "${query}".`);
+  return match.symbol;
+}
+
+async function resolveSymbol(rawInput) {
+  const trimmed = rawInput.trim();
+  const upper = trimmed.toUpperCase();
+
+  if (COMPANY_ALIASES[upper]) return COMPANY_ALIASES[upper];
+
+  // Short, ticker-shaped input — try it directly before falling
+  // back to a text search (cheaper and usually correct).
+  const looksLikeTicker = /^[A-Z0-9.\-]{1,10}$/.test(upper);
+  if (looksLikeTicker) {
+    try {
+      await fetchQuote(upper);
+      return upper;
+    } catch (err) {
+      // Not a valid ticker as typed — fall through to search.
+    }
+  }
+
+  return searchSymbol(trimmed);
+}
+
+/* ---------- Factor scoring ----------
+   Each factor is derived from a real, named field on the Yahoo
+   quote object using a simple, documented heuristic. None of this
+   is a proprietary model — it's a transparent, explainable mapping
+   from public market data onto the same 0-100 scale the UI expects. */
+
+// Valuation: trailingPE compared against a ~22x broad-market
+// benchmark. Cheaper than benchmark scores higher ("attractive");
+// richer scores lower. Loss-making names (no meaningful PE) get a
+// neutral score rather than a misleading one.
+function valuationScoreFromPE(trailingPE) {
+  const BENCHMARK_PE = 22;
+  if (!trailingPE || trailingPE <= 0) return 50;
+  const deviation = (BENCHMARK_PE - trailingPE) / BENCHMARK_PE;
+  return clamp(Math.round(50 + deviation * 90), 4, 96);
+}
+
+// Momentum: current price relative to its 50-day and 200-day
+// moving averages. Trading above both averages scores high;
+// trading below both scores low.
+function momentumScoreFromAverages(price, fiftyDayAvg, twoHundredDayAvg) {
+  if (!price || !fiftyDayAvg || !twoHundredDayAvg) return 50;
+  const pctVs50 = (price - fiftyDayAvg) / fiftyDayAvg;
+  const pctVs200 = (price - twoHundredDayAvg) / twoHundredDayAvg;
+  const blended = pctVs50 * 0.6 + pctVs200 * 0.4;
+  return clamp(Math.round(50 + blended * 400), 4, 96);
+}
+
+// Sentiment: Yahoo's consensus analyst rating, where 1.0 = Strong
+// Buy and 5.0 = Strong Sell. Not every symbol carries analyst
+// coverage (most ETFs don't), so the day's price move is used as a
+// weaker fallback proxy when no rating is present.
+function sentimentScoreFromQuote(quote) {
+  const ratingValue = parseFloat(quote.averageAnalystRating);
+  if (!Number.isNaN(ratingValue) && ratingValue > 0) {
+    return clamp(Math.round(100 - ((ratingValue - 1) / 4) * 100), 4, 96);
+  }
+  if (typeof quote.regularMarketChangePercent === 'number') {
+    return clamp(Math.round(50 + quote.regularMarketChangePercent * 4), 4, 96);
+  }
+  return 50;
+}
+
+// Risk: blends beta (volatility relative to the broad market) with
+// 52-week trading range width (a proxy for realized volatility).
+// Missing beta defaults to 1.0 (market-average sensitivity).
+function riskScoreFromVolatility(beta, fiftyTwoWeekHigh, fiftyTwoWeekLow) {
+  const betaComponent = (typeof beta === 'number' && beta > 0) ? beta : 1;
+  const rangeWidthPct = (fiftyTwoWeekHigh && fiftyTwoWeekLow && fiftyTwoWeekLow > 0)
+    ? (fiftyTwoWeekHigh - fiftyTwoWeekLow) / fiftyTwoWeekLow
+    : 0.3;
+  return clamp(Math.round(betaComponent * 30 + rangeWidthPct * 60), 4, 96);
+}
+
+function computeFactorsFromQuote(quote, horizon) {
+  const scores = {
+    valuation: valuationScoreFromPE(quote.trailingPE),
+    momentum: momentumScoreFromAverages(quote.regularMarketPrice, quote.fiftyDayAverage, quote.twoHundredDayAverage),
+    sentiment: sentimentScoreFromQuote(quote),
+    risk: riskScoreFromVolatility(quote.beta, quote.fiftyTwoWeekHigh, quote.fiftyTwoWeekLow),
+  };
 
   // Horizon adjusts weighting: long-term leans on valuation + risk,
   // short-term leans on momentum + sentiment.
@@ -101,13 +149,11 @@ function generateFactors(symbol, horizon) {
     : { valuation: 0.34, momentum: 0.18, sentiment: 0.18, risk: 0.30 };
 
   return {
-    profile,
-    label: profile ? profile.label : null,
-    scores: { valuation, momentum, sentiment, risk },
+    label: quote.shortName || quote.longName || null,
+    scores,
     weights,
   };
 }
-// Analysed till line 110
 
 /* ---------- Signal + confidence derivation ---------- */
 
@@ -278,7 +324,23 @@ let loadingInterval = null;
 
 /* ---------- State transitions ---------- */
 
+const emptyStateTitle = emptyState.querySelector('.empty-state__title');
+const emptyStateBody = emptyState.querySelector('.empty-state__body');
+const DEFAULT_EMPTY_TITLE = emptyStateTitle.textContent;
+const DEFAULT_EMPTY_BODY = emptyStateBody.textContent;
+
 function showEmpty() {
+  emptyStateTitle.textContent = DEFAULT_EMPTY_TITLE;
+  emptyStateBody.textContent = DEFAULT_EMPTY_BODY;
+  emptyState.hidden = false;
+  loadingState.hidden = true;
+  resultEl.hidden = true;
+}
+
+function showError(message) {
+  clearInterval(loadingInterval);
+  emptyStateTitle.textContent = 'Could not complete analysis';
+  emptyStateBody.textContent = message;
   emptyState.hidden = false;
   loadingState.hidden = true;
   resultEl.hidden = true;
@@ -486,27 +548,26 @@ function getHorizon() {
   return checked ? checked.value : 'long';
 }
 
-function runAnalysis(rawSymbol, horizonOverride) {
-  const symbol = normalizeSymbol(rawSymbol);
+async function runAnalysis(rawSymbol, horizonOverride) {
   const horizon = horizonOverride || getHorizon();
 
   analyzeBtn.disabled = true;
   showLoading();
 
-  // Simulated "thinking" delay so the agent feels like it's doing work
-  const seed = hashString(symbol + horizon);
-  const delay = 1100 + (seed % 700);
-
-  window.setTimeout(() => {
-    const factors = generateFactors(symbol, horizon);
+  try {
+    const symbol = await resolveSymbol(rawSymbol);
+    const quote = await fetchQuote(symbol);
+    const factors = computeFactorsFromQuote(quote, horizon);
     const decision = deriveSignal(factors.scores, factors.weights);
 
     showResult();
     renderResult(symbol, horizon, { factors, decision });
     addToHistory(symbol, horizon, decision.signal);
-
+  } catch (err) {
+    showError(err.message || 'Unable to reach live market data. Please try again.');
+  } finally {
     analyzeBtn.disabled = false;
-  }, delay);
+  }
 }
 
 /* ---------- Events ---------- */
